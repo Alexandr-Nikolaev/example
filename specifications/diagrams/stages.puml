@@ -1,0 +1,20 @@
+
+@startuml
+
+skinparam shadowing false
+skinparam monochrome true
+
+start
+:AWAITING_CONFIRMATION;
+if (Можно без 2fa?) then (false)
+  :CREATE_AUTHORIZATION_REQUEST;
+  :CHECK_TRANSFER_AUTHORIZATION;
+else (true)
+endif
+:TRANSFER_FROM_SENDER;
+
+:FINISHED;
+
+stop
+
+@enduml

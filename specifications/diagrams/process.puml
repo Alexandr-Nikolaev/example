@@ -1,0 +1,162 @@
+@startuml
+
+skinparam shadowing false
+skinparam monochrome true
+
+!define request(a,b,c,d) a->b : c <d>
+!define response(a,b,c,d) a-->b : c <d>
+!define processing(a,b) a->a : b
+!define asynchronousCall(a,b,c,d) a->>b : c <d>
+
+actor User as user
+participant Browser as browser
+participant "Transfers-Сlient" as transfers_client
+participant "Authorization-Back" as auth_back
+database "Transfers-DB" as transfers_db
+participant "Transfers-Back" as transfers
+participant "Profile-back" as profile_back
+participant "Authenticator" as authenticator
+database "Authenticator-DB" as authenticator_db
+queue "Rollback-Context" as rollback_context
+participant "Bank" as bank
+participant "Accounting" as accounting
+
+
+title Перевод денежных средств
+
+ note over user
+    * Пользователь авторизован
+    * Пользователь использует web-версию
+ end note
+
+request(user,browser,Переводы,Другому пользователю)
+request(browser,transfers_client,transfers/outgoing,authorization_token)
+    group процесс валидации авторизации
+        request(transfers_client,auth_back,authorization/verify,authorization_token)
+        response(auth_back,transfers_client,authorization/verify,UID)
+    end
+response(transfers_client, browser,transfers/outgoing, outgoing_form_dto)
+response(browser,user, , Форма отправки средств)
+
+request(user,browser,,Получатель+Сумма)
+request(browser,transfers_client,transfers/contract,получатель+сумма+authorization_token)
+processing(transfers_client, валидация авторизации)
+
+request(transfers_client,transfers,contract/get-transfer-contract,recipient+sender+sum)
+
+' Получаем данные по отправителю
+request(transfers,profile_back,getProfileInfo,UID)
+response(profile_back, transfers, getProfileInfo,userProfile)
+
+' Получаем данные по получателю
+
+    group Если recipient/phone
+        request(transfers,profile_back,getUidByPhone,recipient/phone)
+        response(profile_back,transfers,getUidByPhone,UID)
+    end
+
+    group Если recipient/account
+        request(transfers,profile_back,getUidByAccount,recipient/phone)
+        response(profile_back,transfers,getUidByAccount,UID)
+    end
+request(transfers,profile_back,getProfileInfo,UID)
+response(profile_back, transfers, getProfileInfo,user_profile)
+
+processing(transfers,проверки и комиссия)
+
+request(transfers,transfers_db,insert,transfer)
+response(transfers_db,transfers,,)
+
+response(transfers,transfers_client,contract/get-transfer-contract,contract+transferId)
+response(transfers_client, browser,transfers/contract, contract_dto)
+
+response(browser,user,,contract)
+
+request(user,browser,confirm,)
+request(browser,transfers_client,transfer/confirm,transferId+authorization_token)
+processing(transfers_client, валидация авторизации)
+
+request(transfers_client,transfers,transfer/confirm,transfer_id)
+request(transfers,transfers_db,select,transfer_id)
+response(transfers_db,transfers,,transfer)
+
+    group если нужно 2fa
+        request(transfers,transfers_db,,CREATE_AUTHORIZATION_REQUEST)
+        response(transfers_db,transfers,,)
+        request(transfers,authenticator,/context/create,transfer_id+user_id=UID)
+        request(authenticator,profile_back,getProfileInfo,UID)
+        response(profile_back,authenticator,getProfileInfo,profile)
+        request(authenticator,authenticator_db,insert,context)
+        response(authenticator_db,authenticator,,)
+        request(authenticator,rollback_context,,rollback_task)
+        response(rollback_context,authenticator,,)
+        response(authenticator,transfers,/context/create,contextId)
+        request(transfers,transfers_db,,CHECK_TRANSFER_AUTHORIZATION)
+        response(transfers_db,transfers,,)
+        response(transfers,transfers_client,/confirm, status=awaiting_payer_authentication)
+
+        request(transfers_client,authenticator,/context/get,context_id)
+        response(authenticator,transfers_client,/context/get,context)
+
+        request(transfers_client,authenticator,/context/start,context_id)
+        processing(authenticator,createCode)
+        request(authenticator,authenticator_db,,code)
+        response(authenticator_db,authenticator,,)
+        processing(authenticator,отправка кода)
+            note over authenticator
+                канал отличается для разных способов подтверждения
+            end note
+        request(authenticator,authenticator_db,,AWAITING_CODE_CHECK)
+        response(authenticator_db,authenticator,,)
+        response(authenticator,transfers_client,/context/start,)
+        response(transfers_client,browser,,confirmation_dto)
+        response(browser,user,,форма подтверждения)
+        request(user,browser,,code)
+        request(browser,transfers_client,context/confirm,authorization_token+code+context_id)
+        processing(transfers_client, валидация авторизации)
+        request(transfers_client,authenticator,context/confirm,code+context_id+UID)
+        processing(authenticator,проверить код)
+            note over authenticator
+                Если не совпали
+                * Уменьшить кол-во попыток
+                * Вернуть отказ
+            end note
+        request(authenticator,authenticator_db,,CONFIRMED)
+        response(authenticator_db,authenticator,,)
+            group отдельной очередью
+                asynchronousCall(authenicator,transfers,notify/auth-result,contextId+status=CONFIRMED)
+            end
+        response(authenticator,transfers_client,context/confirm,)
+
+        request(transfers_client,transfers,transfers/confirm,transfer_id)
+        request(transfers,authenticator,context/check,context_id)
+        response(authenticator,transfers,context/check,result)
+    end
+
+response(bank,transfers,payment/execute,result)
+request(transfers,transfers_db,,TRANSFER_FROM_SENDER)
+
+request(transfers,bank,payment/execute,)
+processing(bank,выполнить транзакцию)
+    note over bank
+        * счет отправителя уменьшить на сумму перевода
+        * счет получателя увеличить на сумму перевода - сумма комиссии
+        * счет учета комиссий увеличить на сумму комиссии
+    end note
+asynchronousCall(bank,accounting,,)
+processing(accounting, сформировать бухгалтерские проводки)
+
+asynchronousCall(bank,profile_back,user-balance-update,account+balance)
+processing(profile_back,обновить баланс)
+
+
+request(transfers,transfers_db,,FINISHED)
+response(transfers_db,transfers,,)
+
+response(transfers,transfers_client,/confirm,result)
+response(transfers_client,browser,,success_dto)
+
+response(browser,user,,страница успеха перевода)
+
+
+@enduml

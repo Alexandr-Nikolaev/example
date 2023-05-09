@@ -1,0 +1,38 @@
+@startuml
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+skinparam wrapWidth 300
+LAYOUT_WITH_LEGEND()
+LAYOUT_LANDSCAPE()
+
+
+'==== Границы системы
+Person(User,"Пользователь-отправитель")
+
+Enterprise_Boundary(System,"Система переводов"){
+    Container(Transfers_Сlient,"Transfers-Client", "JS","Взаимодействие пользователя и оркестратора процесса перевода")
+    Container(Transfers_Back,"Transfers-Back","Java","Оркестратор процесса перевода")
+    ContainerDb(Transfers_DB,"Transfers-DB","PostgreSQL","Хранение данных переводов")
+    Container(Profile_back,"Profile-back","Java", "Настройки учетной записи пользователя")
+    Container(Bank,"Bank","Java","Движение средств между счетами")
+}
+
+Container_Ext(Authorization_Back,"Authorization-Back","Java","Авторизация пользователей")
+Container_Ext(Authenticator,"Authenticator","Java","Подтверждение операции вторым фактором")
+ContainerDb_Ext(Authenticator_DB,"Authenticator-DB","PostgreSQL","Хранение сессий подтверждения")
+Container_Ext(Accounting,"Accounting","T-SQL+C#", "Бухгалтерский учет операций")
+
+'==== Связи
+
+    Rel(User,Transfers_Сlient,"Данные для перевода и подтверждение")
+    Rel(Transfers_Сlient,Authorization_Back,"Проверка авторизации пользователя")
+    Rel(Transfers_Сlient,Transfers_Back,"Контракт перевода и подтверждение перевода")
+    Rel(Transfers_Back,Transfers_DB,"Сохранение данных перевода")
+    Rel(Transfers_Back,Profile_back,"Получение профилей отправителя и получателя")
+    Rel(Transfers_Back,Authenticator,"Создание сессии подтверждения и проверка результатов")
+    Rel(Authenticator, Authenticator_DB, "Сохранение сессии подтверждения")
+    Rel(Transfers_Сlient,Authenticator,"Проверка сессии подтверждения")
+    Rel(Transfers_Back,Bank,"Запрос движения денег")
+    Rel(Bank,Accounting,"Уведомление о движении средств")
+
+@enduml
