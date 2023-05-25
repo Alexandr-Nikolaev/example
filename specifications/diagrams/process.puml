@@ -124,7 +124,7 @@ response(transfers_db,transfers,,transfer)
         request(authenticator,authenticator_db,,CONFIRMED)
         response(authenticator_db,authenticator,,)
             group отдельной очередью
-                asynchronousCall(authenicator,transfers,notify/auth-result,contextId+status=CONFIRMED)
+                asynchronousCall(authenticator,transfers,notify/auth-result,contextId+status=CONFIRMED)
             end
         response(authenticator,transfers_client,context/confirm,)
 
